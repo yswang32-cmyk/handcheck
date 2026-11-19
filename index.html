@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>手伸出來｜掌紋分析</title>
+<style>
+:root{--bg:#faf7f2;--card:#fff;--tx:#2b2622;--mut:#7a6f64;--ac:#b4532a;--bd:#e6ddd0;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1815;--card:#26221e;--tx:#f1ebe3;--mut:#a89c8f;--ac:#e8895a;--bd:#3a342d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#1b1815;--card:#26221e;--tx:#f1ebe3;--mut:#a89c8f;--ac:#e8895a;--bd:#3a342d;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.65 -apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
+main{max-width:760px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:24px;margin:8px 0 4px}
+.sub{color:var(--mut);font-size:14px;margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin:14px 0}
+.tips{font-size:14px;color:var(--mut);margin:0;padding-left:18px}
+.btn{display:inline-block;background:var(--ac);color:#fff;border:0;border-radius:10px;padding:11px 18px;font-size:16px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--ac);border:1px solid var(--ac)}
+.btn:disabled{opacity:.5}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
+canvas{width:100%;height:auto;border-radius:10px;display:block;background:#000}
+.tg{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0}
+.tg label{font-size:14px;border:1px solid var(--bd);border-radius:20px;padding:3px 12px;cursor:pointer}
+.legend{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:13px;margin-top:10px;color:var(--mut)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
+h2{font-size:18px;margin:0 0 8px;color:var(--ac)}
+.item{padding:8px 0;border-top:1px solid var(--bd)}
+.item:first-of-type{border-top:0}
+.item b{display:block}
+.item small{color:var(--mut);display:block}
+.status{font-size:14px;color:var(--mut);margin-top:10px}
+.err{color:#d33}
+.note{font-size:12px;color:var(--mut);text-align:center;margin-top:24px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<h1>🖐️ 手伸出來</h1>
+<p class="sub">上傳掌心照片，標註掌紋並產生分析報告</p>
+
+<div class="card">
+<ul class="tips">
+<li>掌心朝上或朝鏡頭，五指自然微開，不要用力撐平</li>
+<li>自然光、手掌填滿畫面、對焦清楚，不要有影子</li>
+<li>左右手各拍一張，可分別分析</li>
+</ul>
+<div class="row">
+<button class="btn" id="pick">選擇或拍攝照片</button>
+<input type="file" id="file" accept="image/*" hidden>
+<button class="btn ghost" id="go" disabled>開始分析</button>
+<button class="btn ghost" id="demo">查看範例結果</button>
+</div>
+<div class="status" id="st"></div>
+</div>
+
+<div class="card" id="view" hidden>
+<canvas id="cv"></canvas>
+<div class="tg" id="tg"></div>
+<div class="legend" id="lg"></div>
+</div>
+
+<div id="rep"></div>
+<p class="note">掌紋解讀屬傳統文化與經驗系統，結果僅供參考與娛樂，不具醫療或科學預測效力。標註位置由 AI 估計，可能有誤差。</p>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const COL={life:"#e5484d",head:"#3e63dd",heart:"#e93d82",fate:"#30a46c",sun:"#f5a524",health:"#12a594",marriage:"#8e4ec6"};
+const MAIN=["life","head","heart"];
+let blob=null,img=null,data=null,layers={main:true,minor:true,mount:true,mark:true};
+
+$("pick").onclick=()=>$("file").click();
+$("file").onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  const url=URL.createObjectURL(f);
+  const im=new Image();
+  im.onload=()=>{
+    const s=Math.min(1,1024/Math.max(im.width,im.height));
+    const c=document.createElement("canvas");c.width=Math.round(im.width*s);c.height=Math.round(im.height*s);
+    c.getContext("2d").drawImage(im,0,0,c.width,c.height);
+    img=c;
+    c.toBlob(b=>{blob=b;$("go").disabled=false;$("st").textContent="照片已就緒，按「開始分析」";data=null;$("rep").innerHTML="";draw();},"image/jpeg",0.85);
+    URL.revokeObjectURL(url);
+  };
+  im.src=url;
+};
+
+$("go").onclick=async()=>{
+  $("go").disabled=true;$("st").className="status";$("st").textContent="AI 分析中，約需 20–40 秒…";
+  try{
+    const sample=await claude.use("sample");
+    if(!sample)throw new Error("此頁面目前無法使用 AI 分析功能");
+    const lim=await sample.limits();
+    if(!lim.images)throw new Error("目前環境不支援圖片分析");
+    const prompt=`你是專業的掌紋觀察助理。請分析這張手掌照片。座標一律用相對圖片寬高的百分比（x、y 皆 0–100，左上角為原點）。
+只輸出 JSON，不要任何其他文字或 markdown。若照片不是清楚的手掌，valid 設 false 並在 reason 說明。
+格式：
+{"valid":true,"reason":"","hand":"左手或右手","shape":"手型簡述",
+"lines":[{"key":"life|head|heart|fate|sun|health|marriage","name":"中文名","points":[[x,y],...4到7點，沿紋路依序],"feature":"特徵(起點終點/長短/深淺/斷分叉)","reading":"含意"}],
+"mounts":[{"name":"木星丘等","x":0,"y":0,"r":6,"feature":"飽滿度","reading":"含意"}],
+"marks":[{"name":"島紋/十字/星紋等","x":0,"y":0,"feature":"位置","reading":"含意"}],
+"report":{"personality":"性格","career":"事業","wealth":"財運","love":"感情","health":"健康提醒(生活層面,非醫療)","advice":"整體建議"}}
+規則：必含生命線、智慧線、感情線；看得清楚才加事業線、太陽線、健康線、婚姻線；掌丘列出六個；看不到的特殊記號就不要編造，marks 可為空。每個文字欄位繁體中文、不超過 50 字，語氣正向、不做絕對斷言。`;
+    const r=await sample(prompt,{images:[blob],modelTier:"complex",cache:false});
+    if(r.truncated)throw new Error("結果過長被截斷，請重試");
+    const m=r.text.match(/\{[\s\S]*\}/);
+    if(!m)throw new Error("解析失敗，請重試");
+    data=JSON.parse(m[0]);
+    if(!data.valid)throw new Error(data.reason||"無法辨識為清楚的手掌照片");
+    $("st").textContent="分析完成";
+    draw();report();
+  }catch(e){
+    $("st").className="status err";
+    $("st").textContent=(e&&e.message)||"分析失敗，請稍後再試";
+  }
+  $("go").disabled=false;
+};
+
+function draw(){
+  if(!img)return;
+  $("view").hidden=false;
+  const cv=$("cv"),ctx=cv.getContext("2d");
+  cv.width=img.width;cv.height=img.height;
+  ctx.drawImage(img,0,0);
+  if(!data)return;
+  const W=cv.width,H=cv.height,u=Math.max(W,H)/900;
+  const px=p=>[p[0]/100*W,p[1]/100*H];
+  const label=(t,x,y,c)=>{
+    ctx.font=`bold ${13*u}px sans-serif`;
+    const w=ctx.measureText(t).width+8*u;
+    ctx.fillStyle="rgba(0,0,0,.65)";ctx.fillRect(x,y-16*u,w,19*u);
+    ctx.fillStyle=c||"#fff";ctx.fillText(t,x+4*u,y-2*u);
+  };
+  (data.lines||[]).forEach(l=>{
+    const main=MAIN.includes(l.key);
+    if(!(main?layers.main:layers.minor)||!l.points||l.points.length<2)return;
+    const pts=l.points.map(px),c=COL[l.key]||"#fff";
+    ctx.strokeStyle=c;ctx.lineWidth=(main?5:3.5)*u;ctx.lineCap="round";ctx.lineJoin="round";ctx.globalAlpha=.9;
+    ctx.beginPath();ctx.moveTo(...pts[0]);
+    for(let i=1;i<pts.length-1;i++){const mx=(pts[i][0]+pts[i+1][0])/2,my=(pts[i][1]+pts[i+1][1])/2;ctx.quadraticCurveTo(pts[i][0],pts[i][1],mx,my)}
+    ctx.lineTo(...pts[pts.length-1]);ctx.stroke();ctx.globalAlpha=1;
+    label(l.name,pts[0][0]+6*u,pts[0][1]-4*u,c);
+  });
+  if(layers.mount)(data.mounts||[]).forEach(m=>{
+    const [x,y]=px([m.x,m.y]),r=(m.r||6)/100*W;
+    ctx.setLineDash([6*u,5*u]);ctx.strokeStyle="#ffd166";ctx.lineWidth=2.5*u;
+    ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.stroke();ctx.setLineDash([]);
+    label(m.name,x-r/2,y+4*u,"#ffd166");
+  });
+  if(layers.mark)(data.marks||[]).forEach(k=>{
+    const [x,y]=px([k.x,k.y]),s=9*u;
+    ctx.fillStyle="#fff";ctx.strokeStyle="#000";ctx.lineWidth=2*u;
+    ctx.beginPath();ctx.moveTo(x,y-s);ctx.lineTo(x+s,y);ctx.lineTo(x,y+s);ctx.lineTo(x-s,y);ctx.closePath();ctx.fill();ctx.stroke();
+    label(k.name,x+s+3*u,y+5*u,"#fff");
+  });
+}
+
+function toggles(){
+  const T=[["main","三大主線"],["minor","輔線"],["mount","掌丘"],["mark","特殊記號"]];
+  $("tg").innerHTML="";
+  T.forEach(([k,n])=>{
+    const l=document.createElement("label"),c=document.createElement("input");
+    c.type="checkbox";c.checked=layers[k];c.onchange=()=>{layers[k]=c.checked;draw()};
+    l.append(c," "+n);$("tg").append(l);
+  });
+}
+
+function sec(title,items){
+  const d=document.createElement("div");d.className="card";
+  const h=document.createElement("h2");h.textContent=title;d.append(h);
+  items.forEach(([a,b,c])=>{
+    const i=document.createElement("div");i.className="item";
+    const t=document.createElement("b");t.textContent=a;i.append(t);
+    if(b){const s=document.createElement("small");s.textContent=b;i.append(s)}
+    if(c){const p=document.createElement("div");p.textContent=c;i.append(p)}
+    d.append(i);
+  });
+  return d;
+}
+
+function report(){
+  const rep=$("rep");rep.innerHTML="";
+  const lg=$("lg");lg.innerHTML="";
+  (data.lines||[]).forEach(l=>{
+    const s=document.createElement("span");
+    s.innerHTML='<i class="dot"></i>';s.firstChild.style.background=COL[l.key]||"#fff";
+    s.append(l.name);lg.append(s);
+  });
+  const r=data.report||{};
+  rep.append(sec("手型總覽",[[(data.hand||"")+"　"+(data.shape||"")]]));
+  rep.append(sec("掌紋線條",(data.lines||[]).map(l=>[l.name,l.feature,l.reading])));
+  rep.append(sec("掌丘",(data.mounts||[]).map(m=>[m.name,m.feature,m.reading])));
+  if((data.marks||[]).length)rep.append(sec("特殊記號",data.marks.map(k=>[k.name,k.feature,k.reading])));
+  rep.append(sec("運勢與命理分析",[["性格",null,r.personality],["事業",null,r.career],["財運",null,r.wealth],["感情",null,r.love],["健康提醒",null,r.health],["整體建議",null,r.advice]]));
+  toggles();
+}
+$("demo").onclick=()=>{
+  const c=document.createElement("canvas");c.width=800;c.height=1000;
+  const x=c.getContext("2d");
+  x.fillStyle="#2a2420";x.fillRect(0,0,800,1000);
+  x.fillStyle="#e3b896";
+  [[215,230],[310,190],[405,220],[500,310]].forEach(f=>{x.beginPath();x.roundRect(f[0],f[1],85,300,42);x.fill()});
+  x.beginPath();x.ellipse(165,640,55,120,-0.5,0,7);x.fill();
+  x.beginPath();x.roundRect(200,480,400,420,60);x.fill();
+  x.beginPath();x.roundRect(260,880,280,120,20);x.fill();
+  img=c;
+  data={valid:true,hand:"右手（示意）",shape:"方形掌配中長手指，掌肉厚實有彈性，偏務實穩健型",
+  lines:[
+  {key:"life",name:"生命線",points:[[29,56],[27,63],[28,70],[33,79],[41,87]],feature:"起點清晰，弧度飽滿，長度中長且無斷點",reading:"體力與精力充沛，生活節奏穩定，恢復力佳"},
+  {key:"head",name:"智慧線",points:[[29,60],[38,63],[48,66],[58,69],[67,72]],feature:"與生命線同起點，走向略下彎，尾端微分叉",reading:"思考務實兼具想像力，做事謹慎、適合規劃型工作"},
+  {key:"heart",name:"感情線",points:[[74,60],[66,57],[56,55],[45,54],[34,52]],feature:"弧度自然，終點在食指與中指之間，中段有島紋",reading:"感情真誠、重視關係，中年期情緒較易起伏"},
+  {key:"fate",name:"事業線",points:[[50,88],[50,78],[49,68],[49,58]],feature:"由手腕直上，中段稍淺但連貫",reading:"事業發展穩定，中年後方向更明確"},
+  {key:"sun",name:"太陽線",points:[[62,80],[62,72],[63,64],[63,57]],feature:"細而清楚，朝無名指方向",reading:"具人緣與表現力，努力易被看見"}],
+  mounts:[
+  {name:"木星丘",x:33,y:51,r:4.5,feature:"微隆起",reading:"有領導意願與上進心"},
+  {name:"土星丘",x:44,y:50,r:4.5,feature:"平坦",reading:"穩重、重視責任"},
+  {name:"太陽丘",x:55,y:51,r:4.5,feature:"稍飽滿",reading:"樂觀、有創意與審美"},
+  {name:"水星丘",x:66,y:53,r:4.5,feature:"飽滿",reading:"溝通與商業頭腦佳"},
+  {name:"月丘",x:66,y:80,r:7,feature:"豐厚",reading:"想像力與直覺豐富"},
+  {name:"金星丘",x:36,y:71,r:7,feature:"飽滿有彈性",reading:"熱情、重情義、生命力強"}],
+  marks:[
+  {name:"島紋",x:52,y:55,feature:"感情線中段",reading:"某段時期感情上壓力較大，宜多溝通"},
+  {name:"十字紋",x:64,y:74,feature:"月丘附近",reading:"直覺敏銳，重要決定前可多觀察"}],
+  report:{personality:"務實穩重又有想像力，待人真誠，遇事習慣先想清楚再行動。",career:"適合需要規劃與長期累積的工作，中年後有機會走向主導角色。",wealth:"財運偏穩健累積型，不宜過度投機，靠專業與信譽增長。",love:"重感情、重承諾，建議遇到壓力時主動表達，避免悶在心裡。",health:"體力底子不錯，留意作息與情緒壓力的調節，維持運動習慣。",advice:"發揮務實與溝通優勢，穩步前進；重要決策前多給自己思考時間。"}};
+  layers={main:true,minor:true,mount:true,mark:true};
+  draw();report();
+  $("st").className="status";$("st").textContent="這是示意範例（非真實照片與分析），實際結果會依你上傳的照片產生";
+  $("view").scrollIntoView({behavior:"smooth"});
+};
+toggles();
+</script>
+</body>
+</html>
